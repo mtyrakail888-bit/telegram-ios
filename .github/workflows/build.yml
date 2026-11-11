@@ -88,6 +88,22 @@ jobs:
           EOF
           grep -rn "MyGram: keep deleted" submodules/TelegramCore/Sources
 
+      - name: Sideload fix (no App Group)
+        run: |
+          cd /Users/Shared/telegram-ios
+          python3 - <<'EOF'
+          p = "submodules/TelegramUI/Sources/AppDelegate.swift"
+          s = open(p, encoding="utf-8").read()
+          old = "let maybeAppGroupUrl = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupName)"
+          new = old + " ?? FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first"
+          if old not in s:
+              raise SystemExit("AppGroup line not found")
+          s = s.replace(old, new, 1)
+          open(p, "w", encoding="utf-8").write(s)
+          print("patched AppGroup fallback")
+          EOF
+          grep -n "maybeAppGroupUrl = " submodules/TelegramUI/Sources/AppDelegate.swift
+
       - name: Build
         run: |
           set -x
@@ -117,6 +133,7 @@ jobs:
           cd "$GITHUB_WORKSPACE/out"
           rm -rf ipa && mkdir ipa && cd ipa
           unzip -q ../MyGram.ipa
+          rm -rf Payload/*.app/PlugIns Payload/*.app/Watch Payload/*.app/Extensions
           python3 - <<'EOF'
           import plistlib, pathlib
           OLD = "ph.telegra.Telegraph"
