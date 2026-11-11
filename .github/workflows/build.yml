@@ -58,6 +58,33 @@ jobs:
           sed -i '' 's/raise PlistToolError(ENTITLEMENTS_PROFILE_HAS_EXPIRED/print(ENTITLEMENTS_PROFILE_HAS_EXPIRED/' "$F"
           grep -n "ENTITLEMENTS_PROFILE_HAS_EXPIRED %" "$F"
 
+      - name: Keep deleted messages
+        run: |
+          cd /Users/Shared/telegram-ios
+          python3 - <<'EOF'
+          import re, pathlib, sys
+          f = pathlib.Path("submodules/TelegramCore/Sources/State/AccountStateManagementUtils.swift")
+          s = f.read_text()
+          total = 0
+          for name in ["DeleteMessagesWithGlobalIds", "DeleteMessages"]:
+              pat = re.compile(r"^([ \t]*)case let \." + name + r"\((\w+)\):[ \t]*\n", re.M)
+              def repl(m):
+                  ind = m.group(1) + "    "
+                  return m.group(0) + ind + "if !" + m.group(2) + ".isEmpty { break } // MyGram: keep deleted messages\n"
+              s, n = pat.subn(repl, s)
+              print(name, "patched:", n)
+              if n == 0:
+                  print("NOT FOUND:", name)
+                  for i, line in enumerate(s.splitlines(), 1):
+                      if name in line:
+                          print(i, line)
+                  sys.exit(1)
+              total += n
+          f.write_text(s)
+          print("OK, total patches:", total)
+          EOF
+          grep -n "MyGram: keep deleted" submodules/TelegramCore/Sources/State/AccountStateManagementUtils.swift
+
       - name: Build
         run: |
           set -x
