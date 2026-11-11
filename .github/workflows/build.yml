@@ -57,7 +57,7 @@ jobs:
           F=build-system/bazel-rules/rules_apple/tools/plisttool/plisttool.py
           sed -i '' 's/raise PlistToolError(ENTITLEMENTS_PROFILE_HAS_EXPIRED/print(ENTITLEMENTS_PROFILE_HAS_EXPIRED/' "$F"
           grep -n "ENTITLEMENTS_PROFILE_HAS_EXPIRED %" "$F"
-          
+
       - name: Build
         run: |
           set -x
@@ -81,6 +81,49 @@ jobs:
           IPA=$(find -L bazel-out -name Telegram.ipa -path '*opt*' | head -n 1)
           echo "IPA: $IPA"
           cp "$IPA" "$GITHUB_WORKSPACE/out/MyGram.ipa"
+
+      - name: Change Bundle ID and name
+        run: |
+          cd "$GITHUB_WORKSPACE/out"
+          rm -rf ipa && mkdir ipa && cd ipa
+          unzip -q ../MyGram.ipa
+          python3 - <<'EOF'
+          import plistlib, pathlib
+          OLD = "ph.telegra.Telegraph"
+          NEW = "com.mygram.app"
+          NAME = "MyGram"
+          def fix(v):
+              if isinstance(v, str):
+                  return NEW + v[len(OLD):] if v.startswith(OLD) else v
+              if isinstance(v, list):
+                  return [fix(x) for x in v]
+              if isinstance(v, dict):
+                  return {k: fix(x) for k, x in v.items()}
+              return v
+          app = next(pathlib.Path("Payload").glob("*.app"))
+          for p in app.rglob("Info.plist"):
+              try:
+                  d = plistlib.loads(p.read_bytes())
+              except Exception:
+                  continue
+              d = fix(d)
+              if p.parent == app:
+                  d["CFBundleDisplayName"] = NAME
+                  d["CFBundleName"] = NAME
+              p.write_bytes(plistlib.dumps(d, fmt=plistlib.FMT_BINARY))
+              print("fixed", p, d.get("CFBundleIdentifier"))
+          for p in app.glob("*.lproj/InfoPlist.strings"):
+              try:
+                  d = plistlib.loads(p.read_bytes())
+              except Exception:
+                  continue
+              if "CFBundleDisplayName" in d:
+                  d["CFBundleDisplayName"] = NAME
+                  p.write_bytes(plistlib.dumps(d, fmt=plistlib.FMT_BINARY))
+          EOF
+          rm -f ../MyGram.ipa
+          zip -qry ../MyGram.ipa Payload
+          cd .. && rm -rf ipa
 
       - uses: actions/upload-artifact@v4
         with:
