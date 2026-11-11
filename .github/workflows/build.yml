@@ -51,6 +51,13 @@ jobs:
           sudo chown $(whoami) /Users/Shared
           cp -R "$GITHUB_WORKSPACE" /Users/Shared/telegram-ios
 
+      - name: Ignore expired fake profiles
+        run: |
+          cd /Users/Shared/telegram-ios
+          F=build-system/bazel-rules/rules_apple/tools/plisttool/plisttool.py
+          sed -i '' 's/raise PlistToolError(ENTITLEMENTS_PROFILE_HAS_EXPIRED/print(ENTITLEMENTS_PROFILE_HAS_EXPIRED/' "$F"
+          grep -n "ENTITLEMENTS_PROFILE_HAS_EXPIRED %" "$F"
+          
       - name: Build
         run: |
           set -x
