@@ -120,6 +120,26 @@ jobs:
           EOF
           grep -n "MYGRAM_ICLOUD" submodules/TelegramCore/Sources/Network/Network.swift
 
+      - name: Sideload fix (no Siri)
+        run: |
+          cd /Users/Shared/telegram-ios
+          python3 - <<'EOF'
+          import re, pathlib
+          pat = re.compile(r"INPreferences\s*\.\s*siriAuthorizationStatus\(\)")
+          total = 0
+          for f in pathlib.Path("submodules").rglob("*.swift"):
+              s = f.read_text(encoding="utf-8", errors="ignore")
+              s2, n = pat.subn("INSiriAuthorizationStatus.denied", s)
+              if n:
+                  f.write_text(s2, encoding="utf-8")
+                  print("patched", f, n)
+                  total += n
+          if total == 0:
+              raise SystemExit("siriAuthorizationStatus not found")
+          print("OK, patched:", total)
+          EOF
+          grep -rn "INSiriAuthorizationStatus.denied" submodules --include=*.swift
+
       - name: Build
         run: |
           set -x
