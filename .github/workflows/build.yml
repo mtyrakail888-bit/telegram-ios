@@ -104,6 +104,22 @@ jobs:
           EOF
           grep -n "maybeAppGroupUrl = " submodules/TelegramUI/Sources/AppDelegate.swift
 
+      - name: Sideload fix (no iCloud / CloudKit)
+        run: |
+          cd /Users/Shared/telegram-ios
+          python3 - <<'EOF'
+          p = "submodules/TelegramCore/Sources/Network/Network.swift"
+          s = open(p, encoding="utf-8").read()
+          old = "!supplementary, arguments.isICloudEnabled {"
+          new = '!supplementary, arguments.isICloudEnabled && ProcessInfo.processInfo.environment["MYGRAM_ICLOUD"] != nil {'
+          if old not in s:
+              raise SystemExit("CloudKit line not found")
+          s = s.replace(old, new)
+          open(p, "w", encoding="utf-8").write(s)
+          print("patched CloudKit off")
+          EOF
+          grep -n "MYGRAM_ICLOUD" submodules/TelegramCore/Sources/Network/Network.swift
+
       - name: Build
         run: |
           set -x
