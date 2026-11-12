@@ -124,21 +124,17 @@ jobs:
         run: |
           cd /Users/Shared/telegram-ios
           python3 - <<'EOF'
-          import re, pathlib
-          pat = re.compile(r"INPreferences\s*\.\s*siriAuthorizationStatus\(\)")
-          total = 0
-          for f in pathlib.Path("submodules").rglob("*.swift"):
-              s = f.read_text(encoding="utf-8", errors="ignore")
-              s2, n = pat.subn("INSiriAuthorizationStatus.denied", s)
-              if n:
-                  f.write_text(s2, encoding="utf-8")
-                  print("patched", f, n)
-                  total += n
-          if total == 0:
-              raise SystemExit("siriAuthorizationStatus not found")
-          print("OK, patched:", total)
+          p = "submodules/TelegramUI/Sources/AppDelegate.swift"
+          s = open(p, encoding="utf-8").read()
+          old = "if buildConfig.isSiriEnabled {"
+          new = 'if buildConfig.isSiriEnabled && ProcessInfo.processInfo.environment["MYGRAM_SIRI"] != nil {'
+          if old not in s:
+              raise SystemExit("Siri line not found")
+          s = s.replace(old, new)
+          open(p, "w", encoding="utf-8").write(s)
+          print("patched Siri off")
           EOF
-          grep -rn "INSiriAuthorizationStatus.denied" submodules --include=*.swift
+          grep -n "MYGRAM_SIRI" submodules/TelegramUI/Sources/AppDelegate.swift
 
       - name: Build
         run: |
