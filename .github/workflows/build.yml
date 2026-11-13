@@ -188,6 +188,75 @@ jobs:
           grep -n "MyGram\|myGram" submodules/TelegramCore/Sources/State/Sync/StateReplay+Messages.swift | head
           grep -n "myGram" submodules/TelegramUI/Components/Chat/ChatMessageDateAndStatusNode/Sources/*.swift
 
+      - name: Ghost mode (hide online)
+        run: |
+          cd /Users/Shared/telegram-ios
+          python3 - <<'EOF'
+          def patch(s, old, new, count=1):
+              if s.count(old) != count:
+                  raise SystemExit("anchor not found: " + old[:80])
+              return s.replace(old, new)
+
+          # 1) Presence: never send "online" while ghost mode is on
+          p = "submodules/TelegramCore/Sources/State/ManagedAccountPresence.swift"
+          s = open(p, encoding="utf-8").read()
+          s = patch(s,
+              "    private func updatePresence(_ isOnline: Bool) {\n        let request: Signal<Api.Bool, MTRpcError>\n        if isOnline {\n",
+              "    private func updatePresence(_ isOnline: Bool) {\n        let request: Signal<Api.Bool, MTRpcError>\n        if isOnline && !UserDefaults.standard.bool(forKey: \"MyGramGhostMode\") {\n")
+          open(p, "w", encoding="utf-8").write(s)
+          print("patched presence")
+
+          # 2) Settings -> Privacy and Security: ghost mode switch
+          p = "submodules/SettingsUI/Sources/Privacy and Security/PrivacyAndSecurityController.swift"
+          s = open(p, encoding="utf-8").read()
+          s = patch(s, "    case linkHandling\n}\n", "    case linkHandling\n    case myGram\n}\n")
+          s = patch(s, "    case openLinksIn(PresentationTheme, String, String)\n",
+              "    case openLinksIn(PresentationTheme, String, String)\n    case myGramGhostHeader(String)\n    case myGramGhost(String, Bool)\n    case myGramGhostInfo(String)\n")
+          s = patch(s, "        case .openLinksIn:\n            return PrivacyAndSecuritySection.linkHandling.rawValue\n",
+              "        case .openLinksIn:\n            return PrivacyAndSecuritySection.linkHandling.rawValue\n        case .myGramGhostHeader, .myGramGhost, .myGramGhostInfo:\n            return PrivacyAndSecuritySection.myGram.rawValue\n")
+          s = patch(s, "            case .openLinksIn:\n                return 33\n",
+              "            case .openLinksIn:\n                return 33\n            case .myGramGhostHeader:\n                return -3\n            case .myGramGhost:\n                return -2\n            case .myGramGhostInfo:\n                return -1\n")
+          s = patch(s, "            case let .openLinksIn(lhsTheme, lhsText, lhsValue):\n", r'''            case let .myGramGhostHeader(text):
+                          if case .myGramGhostHeader(text) = rhs {
+                              return true
+                          } else {
+                              return false
+                          }
+                      case let .myGramGhost(text, value):
+                          if case .myGramGhost(text, value) = rhs {
+                              return true
+                          } else {
+                              return false
+                          }
+                      case let .myGramGhostInfo(text):
+                          if case .myGramGhostInfo(text) = rhs {
+                              return true
+                          } else {
+                              return false
+                          }
+                      case let .openLinksIn(lhsTheme, lhsText, lhsValue):
+          ''')
+          s = patch(s, "            case let .openLinksIn(_, text, value):\n", r'''            case let .myGramGhostHeader(text):
+                          return ItemListSectionHeaderItem(presentationData: presentationData, text: text, sectionId: self.section)
+                      case let .myGramGhost(text, value):
+                          return ItemListSwitchItem(presentationData: presentationData, systemStyle: .glass, title: text, value: value, sectionId: self.section, style: .blocks, updated: { value in
+                              UserDefaults.standard.set(value, forKey: "MyGramGhostMode")
+                          })
+                      case let .myGramGhostInfo(text):
+                          return ItemListTextItem(presentationData: presentationData, text: .plain(text), sectionId: self.section)
+                      case let .openLinksIn(_, text, value):
+          ''')
+          s = patch(s, "    var entries: [PrivacyAndSecurityEntry] = []\n",
+              "    var entries: [PrivacyAndSecurityEntry] = []\n"
+              "    entries.append(.myGramGhostHeader(\"MYGRAM\"))\n"
+              "    entries.append(.myGramGhost(\"Режим призрака\", UserDefaults.standard.bool(forKey: \"MyGramGhostMode\")))\n"
+              "    entries.append(.myGramGhostInfo(\"Вы пользуетесь Telegram, но другие не видят, что вы в сети. После выключения статус «в сети» вернётся при следующем открытии приложения.\"))\n")
+          open(p, "w", encoding="utf-8").write(s)
+          print("patched settings")
+          EOF
+          grep -n "MyGramGhostMode" submodules/TelegramCore/Sources/State/ManagedAccountPresence.swift
+          grep -n "myGram" "submodules/SettingsUI/Sources/Privacy and Security/PrivacyAndSecurityController.swift"
+
       - name: Sideload fix (no App Group)
         run: |
           cd /Users/Shared/telegram-ios
