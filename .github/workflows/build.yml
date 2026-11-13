@@ -58,10 +58,11 @@ jobs:
           sed -i '' 's/raise PlistToolError(ENTITLEMENTS_PROFILE_HAS_EXPIRED/print(ENTITLEMENTS_PROFILE_HAS_EXPIRED/' "$F"
           grep -n "ENTITLEMENTS_PROFILE_HAS_EXPIRED %" "$F"
 
-      - name: Keep deleted messages (with trash mark)
+      - name: Keep deleted messages (red trash icon)
         run: |
           cd /Users/Shared/telegram-ios
           python3 - <<'EOF'
+          # 1) TelegramCore: keep deleted messages and remember their ids
           p = "submodules/TelegramCore/Sources/State/Sync/StateReplay+Messages.swift"
           s = open(p, encoding="utf-8").read()
           a = "    func applyDeleteMessagesWithGlobalIds(_ ids: [Int32]) {\n"
@@ -70,28 +71,122 @@ jobs:
               raise SystemExit("delete functions not found")
           s = s.replace(a, a + "        if !ids.isEmpty { myGramMarkDeleted(transaction.messageIdsForGlobalIds(ids)); return } // MyGram: keep deleted messages\n", 1)
           s = s.replace(b, b + "        if !ids.isEmpty { myGramMarkDeleted(ids); return } // MyGram: keep deleted messages\n", 1)
-          s += '''
+          s += r'''
+
+          public final class MyGramDeletedStore: @unchecked Sendable {
+              public static let shared = MyGramDeletedStore()
+              private let lock = NSLock()
+              private var ids: Set<String>
+
+              private init() {
+                  self.ids = Set(UserDefaults.standard.stringArray(forKey: "MyGramDeletedMessages") ?? [])
+              }
+
+              private static func key(_ id: MessageId) -> String {
+                  return "\(id.peerId.toInt64()):\(id.namespace):\(id.id)"
+              }
+
+              public func contains(_ id: MessageId) -> Bool {
+                  self.lock.lock()
+                  defer { self.lock.unlock() }
+                  return self.ids.contains(MyGramDeletedStore.key(id))
+              }
+
+              public func add(_ newIds: [MessageId]) {
+                  self.lock.lock()
+                  for id in newIds {
+                      self.ids.insert(MyGramDeletedStore.key(id))
+                  }
+                  let all = Array(self.ids)
+                  self.lock.unlock()
+                  UserDefaults.standard.set(all, forKey: "MyGramDeletedMessages")
+              }
+          }
+
+          public func myGramIsMessageDeleted(_ id: MessageId) -> Bool {
+              return MyGramDeletedStore.shared.contains(id)
+          }
 
           extension ReplayContext {
               func myGramMarkDeleted(_ ids: [MessageId]) {
+                  MyGramDeletedStore.shared.add(ids)
                   for id in ids {
                       transaction.updateMessage(id, update: { currentMessage in
-                          if currentMessage.text.hasSuffix("\\u{1F5D1}") {
-                              return .skip
-                          }
-                          let newText = currentMessage.text.isEmpty ? "\\u{1F5D1}" : currentMessage.text + " \\u{1F5D1}"
                           let storeForwardInfo = currentMessage.forwardInfo.flatMap(StoreMessageForwardInfo.init)
-                          return .update(StoreMessage(id: currentMessage.id, customStableId: nil, globallyUniqueId: currentMessage.globallyUniqueId, groupingKey: currentMessage.groupingKey, threadId: currentMessage.threadId, timestamp: currentMessage.timestamp, flags: StoreMessageFlags(currentMessage.flags), tags: currentMessage.tags, globalTags: currentMessage.globalTags, localTags: currentMessage.localTags, forwardInfo: storeForwardInfo, authorId: currentMessage.author?.id, text: newText, attributes: currentMessage.attributes, media: currentMessage.media))
+                          return .update(StoreMessage(id: currentMessage.id, customStableId: nil, globallyUniqueId: currentMessage.globallyUniqueId, groupingKey: currentMessage.groupingKey, threadId: currentMessage.threadId, timestamp: currentMessage.timestamp, flags: StoreMessageFlags(currentMessage.flags), tags: currentMessage.tags, globalTags: currentMessage.globalTags, localTags: currentMessage.localTags, forwardInfo: storeForwardInfo, authorId: currentMessage.author?.id, text: currentMessage.text, attributes: currentMessage.attributes, media: currentMessage.media))
                       })
                   }
               }
           }
-          '''.replace("\n          ", "\n")
+          '''
           open(p, "w", encoding="utf-8").write(s)
-          print("patched: keep deleted + trash mark")
+          print("patched TelegramCore")
+
+          # 2) Time string: add invisible marker for deleted messages
+          p = "submodules/TelegramUI/Components/Chat/ChatMessageDateAndStatusNode/Sources/StringForMessageTimestampStatus.swift"
+          s = open(p, encoding="utf-8").read()
+          old = "public func stringForMessageTimestampStatus("
+          if s.count(old) != 1:
+              raise SystemExit("stringForMessageTimestampStatus not found")
+          s = s.replace(old, "private func myGramOriginalStringForMessageTimestampStatus(")
+          s += r'''
+
+          public func stringForMessageTimestampStatus(
+              context: AccountContext,
+              message: EngineMessage,
+              dateTimeFormat: PresentationDateTimeFormat,
+              nameDisplayOrder: PresentationPersonNameOrder,
+              strings: PresentationStrings,
+              format: MessageTimestampStatusFormat = .regular,
+              associatedData: ChatMessageItemAssociatedData,
+              ignoreAuthor: Bool = false
+          ) -> String {
+              let result = myGramOriginalStringForMessageTimestampStatus(context: context, message: message, dateTimeFormat: dateTimeFormat, nameDisplayOrder: nameDisplayOrder, strings: strings, format: format, associatedData: associatedData, ignoreAuthor: ignoreAuthor)
+              if myGramIsMessageDeleted(message.id) {
+                  return result + "\u{2063}"
+              }
+              return result
+          }
+          '''
+          open(p, "w", encoding="utf-8").write(s)
+          print("patched timestamp string")
+
+          # 3) Date node: red trash icon next to the time
+          p = "submodules/TelegramUI/Components/Chat/ChatMessageDateAndStatusNode/Sources/ChatMessageDateAndStatusNode.swift"
+          s = open(p, encoding="utf-8").read()
+          old1 = "        return { [weak self] arguments in\n"
+          old2 = "            var updatedDateText = arguments.dateText\n"
+          if s.count(old1) != 1 or s.count(old2) != 1:
+              raise SystemExit("date node anchors not found")
+          s = s.replace(old1, "        return { [weak self] myGramArguments in\n            let (arguments, myGramIsDeleted) = myGramFixDateArguments(myGramArguments)\n")
+          s = s.replace(old2, "            if myGramIsDeleted && arguments.replyCount == 0 {\n                repliesImage = myGramTrashImage()\n            }\n" + old2)
+          s += r'''
+
+          private func myGramFixDateArguments(_ arguments: ChatMessageDateAndStatusNode.Arguments) -> (ChatMessageDateAndStatusNode.Arguments, Bool) {
+              guard arguments.dateText.hasSuffix("\u{2063}") else {
+                  return (arguments, false)
+              }
+              var result = arguments
+              result.dateText = String(arguments.dateText.dropLast())
+              result.isPinned = true
+              return (result, true)
+          }
+
+          private func myGramTrashImage() -> UIImage? {
+              guard let symbol = UIImage(systemName: "trash.fill", withConfiguration: UIImage.SymbolConfiguration(pointSize: 9.0, weight: .semibold))?.withTintColor(UIColor(red: 1.0, green: 0.23, blue: 0.19, alpha: 1.0), renderingMode: .alwaysOriginal) else {
+                  return nil
+              }
+              let renderer = UIGraphicsImageRenderer(size: symbol.size)
+              return renderer.image { _ in
+                  symbol.draw(at: CGPoint())
+              }
+          }
+          '''
+          open(p, "w", encoding="utf-8").write(s)
+          print("patched date node")
           EOF
-          grep -n "MyGram" submodules/TelegramCore/Sources/State/Sync/StateReplay+Messages.swift
-          tail -n 20 submodules/TelegramCore/Sources/State/Sync/StateReplay+Messages.swift
+          grep -n "MyGram\|myGram" submodules/TelegramCore/Sources/State/Sync/StateReplay+Messages.swift | head
+          grep -n "myGram" submodules/TelegramUI/Components/Chat/ChatMessageDateAndStatusNode/Sources/*.swift
 
       - name: Sideload fix (no App Group)
         run: |
