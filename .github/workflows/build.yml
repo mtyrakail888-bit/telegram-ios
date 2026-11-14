@@ -188,7 +188,7 @@ jobs:
           grep -n "MyGram\|myGram" submodules/TelegramCore/Sources/State/Sync/StateReplay+Messages.swift | head
           grep -n "myGram" submodules/TelegramUI/Components/Chat/ChatMessageDateAndStatusNode/Sources/*.swift
 
-      - name: Ghost mode (hide online)
+      - name: Ghost mode (full, with switches)
         run: |
           cd /Users/Shared/telegram-ios
           python3 - <<'EOF'
@@ -197,7 +197,7 @@ jobs:
                   raise SystemExit("anchor not found: " + old[:80])
               return s.replace(old, new)
 
-          # 1) Presence: never send "online" while ghost mode is on
+          # 1) Presence: never send "online" while "hide online" is on
           p = "submodules/TelegramCore/Sources/State/ManagedAccountPresence.swift"
           s = open(p, encoding="utf-8").read()
           s = patch(s,
@@ -206,24 +206,59 @@ jobs:
           open(p, "w", encoding="utf-8").write(s)
           print("patched presence")
 
-          # 2) Settings -> Privacy and Security: ghost mode switch
+          # 2) Network: drop read receipts / typing / story views when the switch is on
+          p = "submodules/TelegramCore/Sources/Network/Network.swift"
+          s = open(p, encoding="utf-8").read()
+          guard = "        if myGramShouldBlockRequest(data.0.name) { return .complete() } // MyGram ghost\n"
+          s = patch(s,
+              "    func request<T>(_ data: (FunctionDescription, Buffer, DeserializeFunctionResponse<T>), tag: NetworkRequestDependencyTag? = nil, automaticFloodWait: Bool = true, onFloodWaitError: ((String) -> Void)? = nil) -> Signal<T, MTRpcError> {\n",
+              "    func request<T>(_ data: (FunctionDescription, Buffer, DeserializeFunctionResponse<T>), tag: NetworkRequestDependencyTag? = nil, automaticFloodWait: Bool = true, onFloodWaitError: ((String) -> Void)? = nil) -> Signal<T, MTRpcError> {\n" + guard)
+          s = patch(s,
+              "    func requestWithAdditionalInfo<T>(_ data: (FunctionDescription, Buffer, DeserializeFunctionResponse<T>), info: NetworkRequestAdditionalInfo, tag: NetworkRequestDependencyTag? = nil, automaticFloodWait: Bool = true, onFloodWaitError: ((String) -> Void)? = nil) -> Signal<NetworkRequestResult<T>, MTRpcError> {\n",
+              "    func requestWithAdditionalInfo<T>(_ data: (FunctionDescription, Buffer, DeserializeFunctionResponse<T>), info: NetworkRequestAdditionalInfo, tag: NetworkRequestDependencyTag? = nil, automaticFloodWait: Bool = true, onFloodWaitError: ((String) -> Void)? = nil) -> Signal<NetworkRequestResult<T>, MTRpcError> {\n" + guard)
+          s += r'''
+
+          private let myGramGhostRules: [String: String] = [
+              "messages.readHistory": "MyGramGhostRead",
+              "channels.readHistory": "MyGramGhostRead",
+              "messages.readEncryptedHistory": "MyGramGhostRead",
+              "messages.readDiscussion": "MyGramGhostRead",
+              "messages.readMessageContents": "MyGramGhostRead",
+              "channels.readMessageContents": "MyGramGhostRead",
+              "messages.setTyping": "MyGramGhostTyping",
+              "messages.setEncryptedTyping": "MyGramGhostTyping",
+              "stories.readStories": "MyGramGhostStories",
+              "stories.incrementStoryViews": "MyGramGhostStories"
+          ]
+
+          func myGramShouldBlockRequest(_ name: String) -> Bool {
+              guard let key = myGramGhostRules[name] else {
+                  return false
+              }
+              return UserDefaults.standard.bool(forKey: key)
+          }
+          '''
+          open(p, "w", encoding="utf-8").write(s)
+          print("patched network")
+
+          # 3) Settings -> Privacy and Security: ghost mode switches
           p = "submodules/SettingsUI/Sources/Privacy and Security/PrivacyAndSecurityController.swift"
           s = open(p, encoding="utf-8").read()
           s = patch(s, "    case linkHandling\n}\n", "    case linkHandling\n    case myGram\n}\n")
           s = patch(s, "    case openLinksIn(PresentationTheme, String, String)\n",
-              "    case openLinksIn(PresentationTheme, String, String)\n    case myGramGhostHeader(String)\n    case myGramGhost(String, Bool)\n    case myGramGhostInfo(String)\n")
+              "    case openLinksIn(PresentationTheme, String, String)\n    case myGramGhostHeader(String)\n    case myGramGhostToggle(Int32, String, String, Bool)\n    case myGramGhostInfo(String)\n")
           s = patch(s, "        case .openLinksIn:\n            return PrivacyAndSecuritySection.linkHandling.rawValue\n",
-              "        case .openLinksIn:\n            return PrivacyAndSecuritySection.linkHandling.rawValue\n        case .myGramGhostHeader, .myGramGhost, .myGramGhostInfo:\n            return PrivacyAndSecuritySection.myGram.rawValue\n")
+              "        case .openLinksIn:\n            return PrivacyAndSecuritySection.linkHandling.rawValue\n        case .myGramGhostHeader, .myGramGhostToggle, .myGramGhostInfo:\n            return PrivacyAndSecuritySection.myGram.rawValue\n")
           s = patch(s, "            case .openLinksIn:\n                return 33\n",
-              "            case .openLinksIn:\n                return 33\n            case .myGramGhostHeader:\n                return -3\n            case .myGramGhost:\n                return -2\n            case .myGramGhostInfo:\n                return -1\n")
+              "            case .openLinksIn:\n                return 33\n            case .myGramGhostHeader:\n                return -20\n            case let .myGramGhostToggle(index, _, _, _):\n                return -19 + index\n            case .myGramGhostInfo:\n                return -1\n")
           s = patch(s, "            case let .openLinksIn(lhsTheme, lhsText, lhsValue):\n", r'''            case let .myGramGhostHeader(text):
                           if case .myGramGhostHeader(text) = rhs {
                               return true
                           } else {
                               return false
                           }
-                      case let .myGramGhost(text, value):
-                          if case .myGramGhost(text, value) = rhs {
+                      case let .myGramGhostToggle(index, text, key, value):
+                          if case .myGramGhostToggle(index, text, key, value) = rhs {
                               return true
                           } else {
                               return false
@@ -238,9 +273,9 @@ jobs:
           ''')
           s = patch(s, "            case let .openLinksIn(_, text, value):\n", r'''            case let .myGramGhostHeader(text):
                           return ItemListSectionHeaderItem(presentationData: presentationData, text: text, sectionId: self.section)
-                      case let .myGramGhost(text, value):
+                      case let .myGramGhostToggle(_, text, key, value):
                           return ItemListSwitchItem(presentationData: presentationData, systemStyle: .glass, title: text, value: value, sectionId: self.section, style: .blocks, updated: { value in
-                              UserDefaults.standard.set(value, forKey: "MyGramGhostMode")
+                              UserDefaults.standard.set(value, forKey: key)
                           })
                       case let .myGramGhostInfo(text):
                           return ItemListTextItem(presentationData: presentationData, text: .plain(text), sectionId: self.section)
@@ -248,13 +283,17 @@ jobs:
           ''')
           s = patch(s, "    var entries: [PrivacyAndSecurityEntry] = []\n",
               "    var entries: [PrivacyAndSecurityEntry] = []\n"
-              "    entries.append(.myGramGhostHeader(\"MYGRAM\"))\n"
-              "    entries.append(.myGramGhost(\"Режим призрака\", UserDefaults.standard.bool(forKey: \"MyGramGhostMode\")))\n"
-              "    entries.append(.myGramGhostInfo(\"Вы пользуетесь Telegram, но другие не видят, что вы в сети. После выключения статус «в сети» вернётся при следующем открытии приложения.\"))\n")
+              "    entries.append(.myGramGhostHeader(\"РЕЖИМ ПРИЗРАКА\"))\n"
+              "    entries.append(.myGramGhostToggle(0, \"Скрывать «в сети»\", \"MyGramGhostMode\", UserDefaults.standard.bool(forKey: \"MyGramGhostMode\")))\n"
+              "    entries.append(.myGramGhostToggle(1, \"Не отправлять прочтение\", \"MyGramGhostRead\", UserDefaults.standard.bool(forKey: \"MyGramGhostRead\")))\n"
+              "    entries.append(.myGramGhostToggle(2, \"Скрывать «печатает»\", \"MyGramGhostTyping\", UserDefaults.standard.bool(forKey: \"MyGramGhostTyping\")))\n"
+              "    entries.append(.myGramGhostToggle(3, \"Скрытый просмотр историй\", \"MyGramGhostStories\", UserDefaults.standard.bool(forKey: \"MyGramGhostStories\")))\n"
+              "    entries.append(.myGramGhostInfo(\"Каждый пункт работает отдельно. Прочтение: собеседник не увидит двух галочек, голосовые и кружки не помечаются прослушанными. Если ответить в чат, Telegram сам отметит сообщения прочитанными.\"))\n")
           open(p, "w", encoding="utf-8").write(s)
           print("patched settings")
           EOF
           grep -n "MyGramGhostMode" submodules/TelegramCore/Sources/State/ManagedAccountPresence.swift
+          grep -n "myGramShouldBlockRequest" submodules/TelegramCore/Sources/Network/Network.swift
           grep -n "myGram" "submodules/SettingsUI/Sources/Privacy and Security/PrivacyAndSecurityController.swift"
 
       - name: Sideload fix (no App Group)
