@@ -296,6 +296,212 @@ jobs:
           grep -n "myGramShouldBlockRequest" submodules/TelegramCore/Sources/Network/Network.swift
           grep -n "myGram" "submodules/SettingsUI/Sources/Privacy and Security/PrivacyAndSecurityController.swift"
 
+      - name: Visual profile (only for me)
+        run: |
+          cd /Users/Shared/telegram-ios
+          python3 - <<'EOF'
+          def patch(s, old, new, count=1):
+              if s.count(old) != count:
+                  raise SystemExit("anchor not found: " + old[:80])
+              return s.replace(old, new)
+
+          # 1) TelegramCore: local-only visual overrides for own profile
+          p = "submodules/TelegramCore/Sources/TelegramEngine/Peers/Peer.swift"
+          s = open(p, encoding="utf-8").read()
+          s = patch(s, "import Postbox\n", "import Postbox\nimport SwiftSignalKit\n")
+          s += r'''
+
+          public final class MyGramVisual: @unchecked Sendable {
+              public static let shared = MyGramVisual()
+              private let lock = NSLock()
+              private var counter: Int = 0
+              private let promise = ValuePromise<Int>(0, ignoreRepeated: false)
+
+              public func updates() -> Signal<Int, NoError> {
+                  return self.promise.get()
+              }
+
+              public func notify() {
+                  self.lock.lock()
+                  self.counter += 1
+                  let value = self.counter
+                  self.lock.unlock()
+                  self.promise.set(value)
+              }
+          }
+
+          public func myGramVisualUpdates() -> Signal<Int, NoError> {
+              return MyGramVisual.shared.updates()
+          }
+
+          public func myGramVisualNotify() {
+              MyGramVisual.shared.notify()
+          }
+
+          public func myGramSetSelfPeerId(_ id: PeerId) {
+              let value = id.toInt64()
+              let d = UserDefaults.standard
+              if (d.object(forKey: "MyGramSelfPeerId") as? NSNumber)?.int64Value != value {
+                  d.set(NSNumber(value: value), forKey: "MyGramSelfPeerId")
+              }
+          }
+
+          private func myGramDigits(_ string: String?) -> String {
+              return (string ?? "").filter { "0123456789".contains($0) }
+          }
+
+          private func myGramCleanUsername(_ string: String) -> String {
+              return string.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "@", with: "").replacingOccurrences(of: "t.me/", with: "")
+          }
+
+          public func myGramApplyVisual(_ peer: EnginePeer?) -> EnginePeer? {
+              guard let peer = peer, case let .user(user) = peer else {
+                  return peer
+              }
+              let d = UserDefaults.standard
+              guard let selfId = (d.object(forKey: "MyGramSelfPeerId") as? NSNumber)?.int64Value, selfId == user.id.toInt64() else {
+                  return peer
+              }
+              var result = user
+
+              let main = myGramCleanUsername(d.string(forKey: "MyGramFakeUsername") ?? "")
+              let extras = (d.string(forKey: "MyGramFakeUsernames") ?? "")
+                  .split(whereSeparator: { $0 == "," || $0 == " " || $0 == "\n" })
+                  .map { myGramCleanUsername(String($0)) }
+                  .filter { !$0.isEmpty }
+              if !main.isEmpty || !extras.isEmpty {
+                  var list: [TelegramPeerUsername] = []
+                  if !main.isEmpty {
+                      list.append(TelegramPeerUsername(flags: [.isEditable, .isActive], username: main))
+                  } else {
+                      list.append(contentsOf: user.usernames)
+                      if list.isEmpty, let username = user.username, !username.isEmpty {
+                          list.append(TelegramPeerUsername(flags: [.isEditable, .isActive], username: username))
+                      }
+                  }
+                  for extra in extras {
+                      list.append(TelegramPeerUsername(flags: [.isActive], username: extra))
+                  }
+                  result = result.withUpdatedUsernames(list)
+                  if !main.isEmpty {
+                      result = result.withUpdatedUsername(main)
+                  }
+              }
+
+              let phone = myGramDigits(d.string(forKey: "MyGramFakePhone"))
+              if !phone.isEmpty {
+                  result = result.withUpdatedPhone(phone)
+              }
+
+              if d.bool(forKey: "MyGramFakePremium") {
+                  var flags = result.flags
+                  flags.insert(.isPremium)
+                  result = result.withUpdatedFlags(flags)
+              }
+              return .user(result)
+          }
+
+          public func myGramApplyVisualStars(_ state: StarsContext.State?) -> StarsContext.State? {
+              guard var state = state else {
+                  return nil
+              }
+              let stars = myGramDigits(UserDefaults.standard.string(forKey: "MyGramFakeStars"))
+              if let value = Int64(stars) {
+                  state.balance = StarsAmount(value: value, nanos: 0)
+              }
+              return state
+          }
+          '''
+          open(p, "w", encoding="utf-8").write(s)
+          print("patched TelegramCore visual")
+
+          # 2) Profile / settings data: apply overrides and refresh live
+          p = "submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoData.swift"
+          s = open(p, encoding="utf-8").read()
+          s = patch(s, "        self.peer = peer\n        self.chatPeer = chatPeer\n",
+              "        self.peer = myGramApplyVisual(peer)\n        self.chatPeer = myGramApplyVisual(chatPeer)\n")
+          s = patch(s, "        self.starsState = starsState\n",
+              "        self.starsState = myGramApplyVisualStars(starsState)\n")
+          s = patch(s, "\n        context.account.viewTracker.peerView(peerId, updateData: true),\n",
+              "\n        (combineLatest(context.account.viewTracker.peerView(peerId, updateData: true), myGramVisualUpdates()) |> map { view, _ in view }),\n")
+          s = patch(s, "        let peer = peerView.peers[peerId]\n        let globalSettings",
+              "        let peer = peerView.peers[peerId]\n        myGramSetSelfPeerId(peerId)\n        let globalSettings")
+          open(p, "w", encoding="utf-8").write(s)
+          print("patched PeerInfoData")
+
+          # 3) Settings -> Privacy and Security: visual section
+          p = "submodules/SettingsUI/Sources/Privacy and Security/PrivacyAndSecurityController.swift"
+          s = open(p, encoding="utf-8").read()
+          s = patch(s, "    case myGram\n}\n", "    case myGram\n    case myGramVisual\n}\n")
+          s = patch(s, "    case myGramGhostInfo(String)\n",
+              "    case myGramGhostInfo(String)\n    case myGramVisualHeader(String)\n    case myGramVisualInput(Int32, String, String, String)\n    case myGramVisualSwitch(Int32, String, String, Bool)\n    case myGramVisualInfo(String)\n")
+          s = patch(s, "            return PrivacyAndSecuritySection.myGram.rawValue\n",
+              "            return PrivacyAndSecuritySection.myGram.rawValue\n        case .myGramVisualHeader, .myGramVisualInput, .myGramVisualSwitch, .myGramVisualInfo:\n            return PrivacyAndSecuritySection.myGramVisual.rawValue\n")
+          s = patch(s, "            case .myGramGhostInfo:\n                return -1\n",
+              "            case .myGramGhostInfo:\n                return -1\n"
+              "            case .myGramVisualHeader:\n                return -40\n"
+              "            case let .myGramVisualInput(index, _, _, _):\n                return -39 + index\n"
+              "            case let .myGramVisualSwitch(index, _, _, _):\n                return -30 + index\n"
+              "            case .myGramVisualInfo:\n                return -25\n")
+          s = patch(s, "            case let .openLinksIn(lhsTheme, lhsText, lhsValue):\n", r'''            case let .myGramVisualHeader(text):
+                          if case .myGramVisualHeader(text) = rhs {
+                              return true
+                          } else {
+                              return false
+                          }
+                      case let .myGramVisualInput(index, title, key, value):
+                          if case .myGramVisualInput(index, title, key, value) = rhs {
+                              return true
+                          } else {
+                              return false
+                          }
+                      case let .myGramVisualSwitch(index, title, key, value):
+                          if case .myGramVisualSwitch(index, title, key, value) = rhs {
+                              return true
+                          } else {
+                              return false
+                          }
+                      case let .myGramVisualInfo(text):
+                          if case .myGramVisualInfo(text) = rhs {
+                              return true
+                          } else {
+                              return false
+                          }
+                      case let .openLinksIn(lhsTheme, lhsText, lhsValue):
+          ''')
+          s = patch(s, "            case let .openLinksIn(_, text, value):\n", r'''            case let .myGramVisualHeader(text):
+                          return ItemListSectionHeaderItem(presentationData: presentationData, text: text, sectionId: self.section)
+                      case let .myGramVisualInput(_, title, key, value):
+                          return ItemListSingleLineInputItem(presentationData: presentationData, systemStyle: .glass, title: NSAttributedString(string: title, textColor: presentationData.theme.list.itemPrimaryTextColor), text: value, placeholder: "не задано", type: .regular(capitalization: false, autocorrection: false), spacing: 10.0, sectionId: self.section, textUpdated: { updatedText in
+                              UserDefaults.standard.set(updatedText, forKey: key)
+                              myGramVisualNotify()
+                          }, action: {
+                          })
+                      case let .myGramVisualSwitch(_, title, key, value):
+                          return ItemListSwitchItem(presentationData: presentationData, systemStyle: .glass, title: title, value: value, sectionId: self.section, style: .blocks, updated: { value in
+                              UserDefaults.standard.set(value, forKey: key)
+                              myGramVisualNotify()
+                          })
+                      case let .myGramVisualInfo(text):
+                          return ItemListTextItem(presentationData: presentationData, text: .plain(text), sectionId: self.section)
+                      case let .openLinksIn(_, text, value):
+          ''')
+          d = "UserDefaults.standard"
+          s = patch(s, "    var entries: [PrivacyAndSecurityEntry] = []\n",
+              "    var entries: [PrivacyAndSecurityEntry] = []\n"
+              "    entries.append(.myGramVisualHeader(\"ВИЗУАЛ (ВИДНО ТОЛЬКО ТЕБЕ)\"))\n"
+              "    entries.append(.myGramVisualInput(0, \"Юзернейм\", \"MyGramFakeUsername\", " + d + ".string(forKey: \"MyGramFakeUsername\") ?? \"\"))\n"
+              "    entries.append(.myGramVisualInput(1, \"Доп. юзы\", \"MyGramFakeUsernames\", " + d + ".string(forKey: \"MyGramFakeUsernames\") ?? \"\"))\n"
+              "    entries.append(.myGramVisualInput(2, \"Номер\", \"MyGramFakePhone\", " + d + ".string(forKey: \"MyGramFakePhone\") ?? \"\"))\n"
+              "    entries.append(.myGramVisualInput(3, \"Звёзды\", \"MyGramFakeStars\", " + d + ".string(forKey: \"MyGramFakeStars\") ?? \"\"))\n"
+              "    entries.append(.myGramVisualSwitch(0, \"Значок Premium\", \"MyGramFakePremium\", " + d + ".bool(forKey: \"MyGramFakePremium\")))\n"
+              "    entries.append(.myGramVisualInfo(\"Меняется только у тебя в профиле и настройках, другие видят настоящие данные. Доп. юзы пиши через запятую — они покажутся как купленные. Пустое поле = настоящее значение.\"))\n")
+          open(p, "w", encoding="utf-8").write(s)
+          print("patched settings visual")
+          EOF
+          grep -n "myGramApplyVisual" submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoData.swift
+          grep -c "myGramVisual" "submodules/SettingsUI/Sources/Privacy and Security/PrivacyAndSecurityController.swift"
+
       - name: Sideload fix (no App Group)
         run: |
           cd /Users/Shared/telegram-ios
