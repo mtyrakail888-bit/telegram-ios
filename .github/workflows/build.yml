@@ -240,61 +240,9 @@ jobs:
           '''
           open(p, "w", encoding="utf-8").write(s)
           print("patched network")
-
-          # 3) Settings -> Privacy and Security: ghost mode switches
-          p = "submodules/SettingsUI/Sources/Privacy and Security/PrivacyAndSecurityController.swift"
-          s = open(p, encoding="utf-8").read()
-          s = patch(s, "    case linkHandling\n}\n", "    case linkHandling\n    case myGram\n}\n")
-          s = patch(s, "    case openLinksIn(PresentationTheme, String, String)\n",
-              "    case openLinksIn(PresentationTheme, String, String)\n    case myGramGhostHeader(String)\n    case myGramGhostToggle(Int32, String, String, Bool)\n    case myGramGhostInfo(String)\n")
-          s = patch(s, "        case .openLinksIn:\n            return PrivacyAndSecuritySection.linkHandling.rawValue\n",
-              "        case .openLinksIn:\n            return PrivacyAndSecuritySection.linkHandling.rawValue\n        case .myGramGhostHeader, .myGramGhostToggle, .myGramGhostInfo:\n            return PrivacyAndSecuritySection.myGram.rawValue\n")
-          s = patch(s, "            case .openLinksIn:\n                return 33\n",
-              "            case .openLinksIn:\n                return 33\n            case .myGramGhostHeader:\n                return -20\n            case let .myGramGhostToggle(index, _, _, _):\n                return -19 + index\n            case .myGramGhostInfo:\n                return -1\n")
-          s = patch(s, "            case let .openLinksIn(lhsTheme, lhsText, lhsValue):\n", r'''            case let .myGramGhostHeader(text):
-                          if case .myGramGhostHeader(text) = rhs {
-                              return true
-                          } else {
-                              return false
-                          }
-                      case let .myGramGhostToggle(index, text, key, value):
-                          if case .myGramGhostToggle(index, text, key, value) = rhs {
-                              return true
-                          } else {
-                              return false
-                          }
-                      case let .myGramGhostInfo(text):
-                          if case .myGramGhostInfo(text) = rhs {
-                              return true
-                          } else {
-                              return false
-                          }
-                      case let .openLinksIn(lhsTheme, lhsText, lhsValue):
-          ''')
-          s = patch(s, "            case let .openLinksIn(_, text, value):\n", r'''            case let .myGramGhostHeader(text):
-                          return ItemListSectionHeaderItem(presentationData: presentationData, text: text, sectionId: self.section)
-                      case let .myGramGhostToggle(_, text, key, value):
-                          return ItemListSwitchItem(presentationData: presentationData, systemStyle: .glass, title: text, value: value, sectionId: self.section, style: .blocks, updated: { value in
-                              UserDefaults.standard.set(value, forKey: key)
-                          })
-                      case let .myGramGhostInfo(text):
-                          return ItemListTextItem(presentationData: presentationData, text: .plain(text), sectionId: self.section)
-                      case let .openLinksIn(_, text, value):
-          ''')
-          s = patch(s, "    var entries: [PrivacyAndSecurityEntry] = []\n",
-              "    var entries: [PrivacyAndSecurityEntry] = []\n"
-              "    entries.append(.myGramGhostHeader(\"РЕЖИМ ПРИЗРАКА\"))\n"
-              "    entries.append(.myGramGhostToggle(0, \"Скрывать «в сети»\", \"MyGramGhostMode\", UserDefaults.standard.bool(forKey: \"MyGramGhostMode\")))\n"
-              "    entries.append(.myGramGhostToggle(1, \"Не отправлять прочтение\", \"MyGramGhostRead\", UserDefaults.standard.bool(forKey: \"MyGramGhostRead\")))\n"
-              "    entries.append(.myGramGhostToggle(2, \"Скрывать «печатает»\", \"MyGramGhostTyping\", UserDefaults.standard.bool(forKey: \"MyGramGhostTyping\")))\n"
-              "    entries.append(.myGramGhostToggle(3, \"Скрытый просмотр историй\", \"MyGramGhostStories\", UserDefaults.standard.bool(forKey: \"MyGramGhostStories\")))\n"
-              "    entries.append(.myGramGhostInfo(\"Каждый пункт работает отдельно. Прочтение: собеседник не увидит двух галочек, голосовые и кружки не помечаются прослушанными. Если ответить в чат, Telegram сам отметит сообщения прочитанными.\"))\n")
-          open(p, "w", encoding="utf-8").write(s)
-          print("patched settings")
           EOF
           grep -n "MyGramGhostMode" submodules/TelegramCore/Sources/State/ManagedAccountPresence.swift
           grep -n "myGramShouldBlockRequest" submodules/TelegramCore/Sources/Network/Network.swift
-          grep -n "myGram" "submodules/SettingsUI/Sources/Privacy and Security/PrivacyAndSecurityController.swift"
 
       - name: Visual profile (only for me)
         run: |
@@ -429,78 +377,211 @@ jobs:
           open(p, "w", encoding="utf-8").write(s)
           print("patched PeerInfoData")
 
-          # 3) Settings -> Privacy and Security: visual section
-          p = "submodules/SettingsUI/Sources/Privacy and Security/PrivacyAndSecurityController.swift"
+          # 3) TelegramCore: exact fake phone display
+          p = "submodules/TelegramCore/Sources/TelegramEngine/Peers/Peer.swift"
           s = open(p, encoding="utf-8").read()
-          s = patch(s, "    case myGram\n}\n", "    case myGram\n    case myGramVisual\n}\n")
-          s = patch(s, "    case myGramGhostInfo(String)\n",
-              "    case myGramGhostInfo(String)\n    case myGramVisualHeader(String)\n    case myGramVisualInput(Int32, String, String, String)\n    case myGramVisualSwitch(Int32, String, String, Bool)\n    case myGramVisualInfo(String)\n")
-          s = patch(s, "            return PrivacyAndSecuritySection.myGram.rawValue\n",
-              "            return PrivacyAndSecuritySection.myGram.rawValue\n        case .myGramVisualHeader, .myGramVisualInput, .myGramVisualSwitch, .myGramVisualInfo:\n            return PrivacyAndSecuritySection.myGramVisual.rawValue\n")
-          s = patch(s, "            case .myGramGhostInfo:\n                return -1\n",
-              "            case .myGramGhostInfo:\n                return -1\n"
-              "            case .myGramVisualHeader:\n                return -40\n"
-              "            case let .myGramVisualInput(index, _, _, _):\n                return -39 + index\n"
-              "            case let .myGramVisualSwitch(index, _, _, _):\n                return -30 + index\n"
-              "            case .myGramVisualInfo:\n                return -25\n")
-          s = patch(s, "            case let .openLinksIn(lhsTheme, lhsText, lhsValue):\n", r'''            case let .myGramVisualHeader(text):
-                          if case .myGramVisualHeader(text) = rhs {
-                              return true
-                          } else {
-                              return false
-                          }
-                      case let .myGramVisualInput(index, title, key, value):
-                          if case .myGramVisualInput(index, title, key, value) = rhs {
-                              return true
-                          } else {
-                              return false
-                          }
-                      case let .myGramVisualSwitch(index, title, key, value):
-                          if case .myGramVisualSwitch(index, title, key, value) = rhs {
-                              return true
-                          } else {
-                              return false
-                          }
-                      case let .myGramVisualInfo(text):
-                          if case .myGramVisualInfo(text) = rhs {
-                              return true
-                          } else {
-                              return false
-                          }
-                      case let .openLinksIn(lhsTheme, lhsText, lhsValue):
-          ''')
-          s = patch(s, "            case let .openLinksIn(_, text, value):\n", r'''            case let .myGramVisualHeader(text):
-                          return ItemListSectionHeaderItem(presentationData: presentationData, text: text, sectionId: self.section)
-                      case let .myGramVisualInput(_, title, key, value):
-                          return ItemListSingleLineInputItem(presentationData: presentationData, systemStyle: .glass, title: NSAttributedString(string: title, textColor: presentationData.theme.list.itemPrimaryTextColor), text: value, placeholder: "не задано", type: .regular(capitalization: false, autocorrection: false), spacing: 10.0, sectionId: self.section, textUpdated: { updatedText in
-                              UserDefaults.standard.set(updatedText, forKey: key)
-                              myGramVisualNotify()
-                          }, action: {
-                          })
-                      case let .myGramVisualSwitch(_, title, key, value):
-                          return ItemListSwitchItem(presentationData: presentationData, systemStyle: .glass, title: title, value: value, sectionId: self.section, style: .blocks, updated: { value in
-                              UserDefaults.standard.set(value, forKey: key)
-                              myGramVisualNotify()
-                          })
-                      case let .myGramVisualInfo(text):
-                          return ItemListTextItem(presentationData: presentationData, text: .plain(text), sectionId: self.section)
-                      case let .openLinksIn(_, text, value):
-          ''')
-          d = "UserDefaults.standard"
-          s = patch(s, "    var entries: [PrivacyAndSecurityEntry] = []\n",
-              "    var entries: [PrivacyAndSecurityEntry] = []\n"
-              "    entries.append(.myGramVisualHeader(\"ВИЗУАЛ (ВИДНО ТОЛЬКО ТЕБЕ)\"))\n"
-              "    entries.append(.myGramVisualInput(0, \"Юзернейм\", \"MyGramFakeUsername\", " + d + ".string(forKey: \"MyGramFakeUsername\") ?? \"\"))\n"
-              "    entries.append(.myGramVisualInput(1, \"Доп. юзы\", \"MyGramFakeUsernames\", " + d + ".string(forKey: \"MyGramFakeUsernames\") ?? \"\"))\n"
-              "    entries.append(.myGramVisualInput(2, \"Номер\", \"MyGramFakePhone\", " + d + ".string(forKey: \"MyGramFakePhone\") ?? \"\"))\n"
-              "    entries.append(.myGramVisualInput(3, \"Звёзды\", \"MyGramFakeStars\", " + d + ".string(forKey: \"MyGramFakeStars\") ?? \"\"))\n"
-              "    entries.append(.myGramVisualSwitch(0, \"Значок Premium\", \"MyGramFakePremium\", " + d + ".bool(forKey: \"MyGramFakePremium\")))\n"
-              "    entries.append(.myGramVisualInfo(\"Меняется только у тебя в профиле и настройках, другие видят настоящие данные. Доп. юзы пиши через запятую — они покажутся как купленные. Пустое поле = настоящее значение.\"))\n")
+          s += r'''
+
+          public func myGramFakePhoneDisplay(_ number: String) -> String? {
+              let raw = (UserDefaults.standard.string(forKey: "MyGramFakePhone") ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+              let fakeDigits = myGramDigits(raw)
+              if fakeDigits.isEmpty || myGramDigits(number) != fakeDigits {
+                  return nil
+              }
+              return raw.hasPrefix("+") ? raw : "+" + raw
+          }
+          '''
           open(p, "w", encoding="utf-8").write(s)
-          print("patched settings visual")
+          print("patched phone display helper")
+
+          p = "submodules/PhoneNumberFormat/Sources/PhoneNumbers.swift"
+          s = open(p, encoding="utf-8").read()
+          s = patch(s, "public func formatPhoneNumber(_ string: String) -> String {\n",
+              "public func formatPhoneNumber(_ string: String) -> String {\n    if let myGramRaw = myGramFakePhoneDisplay(string) { return myGramRaw }\n")
+          s = patch(s, "public func formatPhoneNumber(context: AccountContext, number: String) -> String {\n",
+              "public func formatPhoneNumber(context: AccountContext, number: String) -> String {\n    if let myGramRaw = myGramFakePhoneDisplay(number) { return myGramRaw }\n")
+          open(p, "w", encoding="utf-8").write(s)
+          print("patched phone format")
+
+          # 4) "My Stars" screen: show fake balance
+          p = "submodules/TelegramUI/Components/Stars/StarsTransactionsScreen/Sources/StarsTransactionsScreen.swift"
+          s = open(p, encoding="utf-8").read()
+          s = patch(s, "                    self.starsState = state\n",
+              "                    self.starsState = component.starsContext.ton ? state : myGramApplyVisualStars(state)\n")
+          open(p, "w", encoding="utf-8").write(s)
+          print("patched stars screen")
           EOF
           grep -n "myGramApplyVisual" submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoData.swift
-          grep -c "myGramVisual" "submodules/SettingsUI/Sources/Privacy and Security/PrivacyAndSecurityController.swift"
+          grep -n "myGramFakePhoneDisplay" submodules/PhoneNumberFormat/Sources/PhoneNumbers.swift
+
+      - name: MyGram settings tab
+        run: |
+          cd /Users/Shared/telegram-ios
+          python3 - <<'EOF'
+          def patch(s, old, new, count=1):
+              if s.count(old) != count:
+                  raise SystemExit("anchor not found: " + old[:80])
+              return s.replace(old, new)
+
+          # 1) New screen: Settings -> MyGram
+          p = "submodules/SettingsUI/Sources/MyGramSettingsController.swift"
+          open(p, "w", encoding="utf-8").write(r'''import Foundation
+          import UIKit
+          import Display
+          import SwiftSignalKit
+          import TelegramCore
+          import TelegramPresentationData
+          import ItemListUI
+          import PresentationDataUtils
+          import AccountContext
+
+          private enum MyGramEntryKind: Int32, Equatable {
+              case header
+              case toggle
+              case input
+              case info
+          }
+
+          private struct MyGramEntry: ItemListNodeEntry, Equatable {
+              let kind: MyGramEntryKind
+              let sectionValue: Int32
+              let id: Int32
+              let title: String
+              let key: String
+              let text: String
+              let flag: Bool
+              let isNumber: Bool
+
+              var section: ItemListSectionId {
+                  return self.sectionValue
+              }
+
+              var stableId: Int32 {
+                  return self.id
+              }
+
+              static func ==(lhs: MyGramEntry, rhs: MyGramEntry) -> Bool {
+                  return lhs.kind == rhs.kind && lhs.sectionValue == rhs.sectionValue && lhs.id == rhs.id && lhs.title == rhs.title && lhs.key == rhs.key && lhs.text == rhs.text && lhs.flag == rhs.flag && lhs.isNumber == rhs.isNumber
+              }
+
+              static func <(lhs: MyGramEntry, rhs: MyGramEntry) -> Bool {
+                  return lhs.id < rhs.id
+              }
+
+              func item(presentationData: ItemListPresentationData, arguments: Any) -> ListViewItem {
+                  let key = self.key
+                  switch self.kind {
+                  case .header:
+                      return ItemListSectionHeaderItem(presentationData: presentationData, text: self.title, sectionId: self.section)
+                  case .toggle:
+                      return ItemListSwitchItem(presentationData: presentationData, systemStyle: .glass, title: self.title, value: self.flag, sectionId: self.section, style: .blocks, updated: { value in
+                          UserDefaults.standard.set(value, forKey: key)
+                          myGramVisualNotify()
+                      })
+                  case .input:
+                      return ItemListSingleLineInputItem(presentationData: presentationData, systemStyle: .glass, title: NSAttributedString(string: self.title, textColor: presentationData.theme.list.itemPrimaryTextColor), text: self.text, placeholder: "не задано", type: self.isNumber ? .number : .regular(capitalization: false, autocorrection: false), spacing: 10.0, sectionId: self.section, textUpdated: { updatedText in
+                          UserDefaults.standard.set(updatedText, forKey: key)
+                          myGramVisualNotify()
+                      }, action: {
+                      })
+                  case .info:
+                      return ItemListTextItem(presentationData: presentationData, text: .plain(self.title), sectionId: self.section)
+                  }
+              }
+          }
+
+          private func myGramEntries() -> [MyGramEntry] {
+              let d = UserDefaults.standard
+              var entries: [MyGramEntry] = []
+              func header(_ section: Int32, _ id: Int32, _ text: String) {
+                  entries.append(MyGramEntry(kind: .header, sectionValue: section, id: id, title: text, key: "", text: "", flag: false, isNumber: false))
+              }
+              func toggle(_ section: Int32, _ id: Int32, _ title: String, _ key: String) {
+                  entries.append(MyGramEntry(kind: .toggle, sectionValue: section, id: id, title: title, key: key, text: "", flag: d.bool(forKey: key), isNumber: false))
+              }
+              func input(_ section: Int32, _ id: Int32, _ title: String, _ key: String, _ isNumber: Bool = false) {
+                  entries.append(MyGramEntry(kind: .input, sectionValue: section, id: id, title: title, key: key, text: d.string(forKey: key) ?? "", flag: false, isNumber: isNumber))
+              }
+              func info(_ section: Int32, _ id: Int32, _ text: String) {
+                  entries.append(MyGramEntry(kind: .info, sectionValue: section, id: id, title: text, key: "", text: "", flag: false, isNumber: false))
+              }
+
+              header(0, 0, "РЕЖИМ ПРИЗРАКА")
+              toggle(0, 1, "Скрывать «в сети»", "MyGramGhostMode")
+              toggle(0, 2, "Не отправлять прочтение", "MyGramGhostRead")
+              toggle(0, 3, "Скрывать «печатает»", "MyGramGhostTyping")
+              toggle(0, 4, "Скрытый просмотр историй", "MyGramGhostStories")
+              info(0, 5, "Каждый пункт работает отдельно. Прочтение: собеседник не увидит двух галочек, голосовые и кружки не помечаются прослушанными. Если ответить в чат, Telegram сам отметит сообщения прочитанными.")
+
+              header(1, 10, "ВИЗУАЛ (ВИДНО ТОЛЬКО ТЕБЕ)")
+              input(1, 11, "Юзернейм", "MyGramFakeUsername")
+              input(1, 12, "Доп. юзы", "MyGramFakeUsernames")
+              input(1, 13, "Номер", "MyGramFakePhone")
+              input(1, 14, "Звёзды", "MyGramFakeStars", true)
+              toggle(1, 15, "Значок Premium", "MyGramFakePremium")
+              info(1, 16, "Меняется только у тебя: профиль, настройки, «Мои звёзды». Другие видят настоящие данные. Доп. юзы пиши через запятую — покажутся как купленные. Номер показывается ровно так, как ты его ввёл. Пустое поле = настоящее значение.")
+
+              info(2, 20, "Удалённые сообщения сохраняются автоматически и помечаются красной корзиной.")
+              return entries
+          }
+
+          public func myGramSettingsController(context: AccountContext) -> ViewController {
+              let signal = combineLatest(context.sharedContext.presentationData, myGramVisualUpdates())
+              |> deliverOnMainQueue
+              |> map { presentationData, _ -> (ItemListControllerState, (ItemListNodeState, Any)) in
+                  let controllerState = ItemListControllerState(presentationData: ItemListPresentationData(presentationData), title: .text("MyGram"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
+                  let listState = ItemListNodeState(presentationData: ItemListPresentationData(presentationData), entries: myGramEntries(), style: .blocks, animateChanges: false)
+                  return (controllerState, (listState, 0))
+              }
+              let controller = ItemListController(context: context, state: signal)
+              return controller
+          }
+          ''')
+          print("created MyGramSettingsController")
+
+          # 2) Settings section enum + action
+          p = "submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreen.swift"
+          s = open(p, encoding="utf-8").read()
+          s = patch(s, "    case stars\n    case ton\n", "    case stars\n    case ton\n    case myGram\n")
+          open(p, "w", encoding="utf-8").write(s)
+
+          p = "submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreenSettingsActions.swift"
+          s = open(p, encoding="utf-8").read()
+          s = patch(s, "        case .ton:\n", "        case .myGram:\n            push(myGramSettingsController(context: self.context))\n        case .ton:\n")
+          open(p, "w", encoding="utf-8").write(s)
+
+          # 3) Settings list: own block between "Chat folders" and "Notifications"
+          p = "submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift"
+          s = open(p, encoding="utf-8").read()
+          s = patch(s, "    case shortcuts\n    case advanced\n", "    case shortcuts\n    case myGram\n    case advanced\n")
+          s = patch(s, "    let notificationsWarning: Bool\n",
+              "    items[.myGram]!.append(PeerInfoScreenDisclosureItem(id: 0, text: \"MyGram\", icon: myGramSettingsIcon, action: {\n        interaction.openSettings(.myGram)\n    }))\n    \n    let notificationsWarning: Bool\n")
+          s += r'''
+
+          private let myGramSettingsIcon: UIImage? = {
+              let size = CGSize(width: 30.0, height: 30.0)
+              let renderer = UIGraphicsImageRenderer(size: size)
+              return renderer.image { ctx in
+                  let rect = CGRect(origin: CGPoint(), size: size)
+                  let path = UIBezierPath(roundedRect: rect, cornerRadius: 7.0)
+                  ctx.cgContext.addPath(path.cgPath)
+                  ctx.cgContext.clip()
+                  let colors = [UIColor(red: 0.55, green: 0.30, blue: 0.95, alpha: 1.0).cgColor, UIColor(red: 0.95, green: 0.30, blue: 0.55, alpha: 1.0).cgColor] as CFArray
+                  if let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors, locations: [0.0, 1.0]) {
+                      ctx.cgContext.drawLinearGradient(gradient, start: CGPoint(x: 0.0, y: 0.0), end: CGPoint(x: size.width, y: size.height), options: [])
+                  }
+                  if let symbol = UIImage(systemName: "theatermasks.fill", withConfiguration: UIImage.SymbolConfiguration(pointSize: 15.0, weight: .semibold))?.withTintColor(.white, renderingMode: .alwaysOriginal) {
+                      let symbolRect = CGRect(x: (size.width - symbol.size.width) / 2.0, y: (size.height - symbol.size.height) / 2.0, width: symbol.size.width, height: symbol.size.height)
+                      symbol.draw(in: symbolRect)
+                  }
+              }
+          }()
+          '''
+          open(p, "w", encoding="utf-8").write(s)
+          print("patched settings list")
+          EOF
+          grep -n "myGram" submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift | head
+          ls -la submodules/SettingsUI/Sources/MyGramSettingsController.swift
 
       - name: Sideload fix (no App Group)
         run: |
