@@ -583,6 +583,11 @@ jobs:
           grep -n "myGram" submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift | head
           ls -la submodules/SettingsUI/Sources/MyGramSettingsController.swift
 
+      - name: MyGram style (emoji, colors, background)
+        run: |
+          cd /Users/Shared/telegram-ios
+          python3 "$GITHUB_WORKSPACE/mygram_style.py"
+
       - name: Sideload fix (no App Group)
         run: |
           cd /Users/Shared/telegram-ios
