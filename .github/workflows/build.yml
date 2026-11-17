@@ -244,6 +244,52 @@ jobs:
           grep -n "MyGramGhostMode" submodules/TelegramCore/Sources/State/ManagedAccountPresence.swift
           grep -n "myGramShouldBlockRequest" submodules/TelegramCore/Sources/Network/Network.swift
 
+      - name: Ghost mode (offline right after sending)
+        run: |
+          cd /Users/Shared/telegram-ios
+          python3 - <<'EOF'
+          p = "submodules/TelegramCore/Sources/Network/Network.swift"
+          s = open(p, encoding="utf-8").read()
+          guard = "        if myGramShouldBlockRequest(data.0.name) { return .complete() } // MyGram ghost\n"
+          if s.count(guard) != 2:
+              raise SystemExit("ghost guard not found (Ghost mode step must run first)")
+          hook = "        if myGramIsSendRequest(data.0.name) { myGramScheduleOffline { let _ = self.request(Api.functions.account.updateStatus(offline: .boolTrue)).start() } } // MyGram ghost offline\n"
+          s = s.replace(guard, guard + hook)
+          s += r"""
+
+          private let myGramSendRequests: Set<String> = [
+              "messages.sendMessage",
+              "messages.sendMedia",
+              "messages.sendMultiMedia",
+              "messages.forwardMessages",
+              "messages.sendInlineBotResult",
+              "messages.sendReaction",
+              "messages.sendVote",
+              "messages.editMessage",
+              "messages.sendEncrypted",
+              "messages.sendEncryptedFile",
+              "messages.sendEncryptedService",
+              "messages.sendScreenshotNotification",
+              "messages.sendQuickReplyMessages",
+              "stories.sendStory",
+              "stories.sendReaction"
+          ]
+
+          func myGramIsSendRequest(_ name: String) -> Bool {
+              return UserDefaults.standard.bool(forKey: "MyGramGhostMode") && myGramSendRequests.contains(name)
+          }
+
+          func myGramScheduleOffline(_ action: @escaping () -> Void) {
+              for delay in [0.7, 2.0, 4.5] {
+                  Queue.concurrentDefaultQueue().after(delay, action)
+              }
+          }
+          """
+          open(p, "w", encoding="utf-8").write(s)
+          print("patched ghost offline after send")
+          EOF
+          grep -n "myGramIsSendRequest\|myGramScheduleOffline" submodules/TelegramCore/Sources/Network/Network.swift
+
       - name: Visual profile (only for me)
         run: |
           cd /Users/Shared/telegram-ios
