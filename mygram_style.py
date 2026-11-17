@@ -80,16 +80,49 @@ public func myGramResetLocalStyle(emojiStatus: Bool, profileStyle: Bool) {
 }
 
 public func myGramBackgroundDirectory() -> URL {
-    let base = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-    let dir = base.appendingPathComponent("MyGramBackground", isDirectory: true)
-    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true, attributes: nil)
+    let fm = FileManager.default
+    let base = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+    var dir = base.appendingPathComponent("MyGramBackground", isDirectory: true)
+    if !fm.fileExists(atPath: dir.path) {
+        try? fm.createDirectory(at: dir, withIntermediateDirectories: true, attributes: nil)
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try? dir.setResourceValues(values)
+        // move a background saved by the old version (Documents) if it still exists
+        let oldDir = fm.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("MyGramBackground", isDirectory: true)
+        if let items = try? fm.contentsOfDirectory(atPath: oldDir.path) {
+            for item in items {
+                try? fm.moveItem(atPath: oldDir.appendingPathComponent(item).path, toPath: dir.appendingPathComponent(item).path)
+            }
+        }
+    }
     return dir
 }
 
-public func myGramCustomBackgroundPath() -> String? {
-    guard let name = UserDefaults.standard.string(forKey: "MyGramBgFile"), !name.isEmpty else {
+private func myGramNewestBackgroundName() -> String? {
+    let dir = myGramBackgroundDirectory()
+    guard let items = try? FileManager.default.contentsOfDirectory(atPath: dir.path) else {
         return nil
     }
+    return items.filter { $0.hasPrefix("bg_") }.sorted().last
+}
+
+public func myGramCustomBackgroundPath() -> String? {
+    let d = UserDefaults.standard
+    if let name = d.string(forKey: "MyGramBgFile"), !name.isEmpty {
+        let path = myGramBackgroundDirectory().appendingPathComponent(name).path
+        if FileManager.default.fileExists(atPath: path) {
+            return path
+        }
+    }
+    if d.bool(forKey: "MyGramBgRemoved") {
+        return nil
+    }
+    // the setting was lost but the file is still there: pick it up again
+    guard let name = myGramNewestBackgroundName() else {
+        return nil
+    }
+    d.set(name, forKey: "MyGramBgFile")
     return myGramBackgroundDirectory().appendingPathComponent(name).path
 }
 
@@ -106,22 +139,29 @@ public func myGramIsCustomBackgroundActive() -> Bool {
 
 public func myGramSetCustomBackground(data: Data?, ext: String) {
     let d = UserDefaults.standard
-    if let old = myGramCustomBackgroundPath() {
-        try? FileManager.default.removeItem(atPath: old)
+    let fm = FileManager.default
+    let dir = myGramBackgroundDirectory()
+    if let items = try? fm.contentsOfDirectory(atPath: dir.path) {
+        for item in items {
+            try? fm.removeItem(atPath: dir.appendingPathComponent(item).path)
+        }
     }
     if let data = data {
         let name = "bg_\(Int64(Date().timeIntervalSince1970 * 1000.0)).\(ext)"
-        let url = myGramBackgroundDirectory().appendingPathComponent(name)
+        let url = dir.appendingPathComponent(name)
         do {
             try data.write(to: url, options: .atomic)
             d.set(name, forKey: "MyGramBgFile")
+            d.set(false, forKey: "MyGramBgRemoved")
         } catch {
             d.removeObject(forKey: "MyGramBgFile")
         }
     } else {
         d.removeObject(forKey: "MyGramBgFile")
+        d.set(true, forKey: "MyGramBgRemoved")
     }
     d.set(Date().timeIntervalSince1970, forKey: "MyGramBgStamp")
+    d.synchronize()
     DispatchQueue.main.async {
         myGramVisualNotify()
     }
@@ -357,7 +397,7 @@ s = s[:k] + r'''    func action(_ section: Int32, _ id: Int32, _ title: String, 
 
     header(3, 30, "ОФОРМЛЕНИЕ (ВИДНО ТОЛЬКО ТЕБЕ)")
     action(3, 31, "Фон профиля: фото, GIF или видео", "pickBackground")
-    if d.string(forKey: "MyGramBgFile") != nil {
+    if myGramCustomBackgroundPath() != nil {
         action(3, 32, "Убрать фон профиля", "removeBackground")
     }
     if d.object(forKey: "MyGramEmojiStatusId") != nil {
