@@ -486,6 +486,7 @@ jobs:
               case toggle
               case input
               case info
+              case option
           }
 
           private struct MyGramEntry: ItemListNodeEntry, Equatable {
@@ -538,6 +539,12 @@ jobs:
                           myGramVisualNotify()
                       }, action: {
                       })
+                  case .option:
+                      let value = self.text
+                      return ItemListCheckboxItem(presentationData: presentationData, systemStyle: .glass, title: self.title, style: .left, checked: self.flag, zeroSeparatorInsets: false, sectionId: self.section, action: {
+                          UserDefaults.standard.set(value, forKey: key)
+                          myGramVisualNotify()
+                      })
                   case .info:
                       return ItemListTextItem(presentationData: presentationData, text: .plain(self.title), sectionId: self.section)
                   }
@@ -550,8 +557,11 @@ jobs:
               func header(_ section: Int32, _ id: Int32, _ text: String) {
                   entries.append(MyGramEntry(kind: .header, sectionValue: section, id: id, title: text, key: "", text: "", flag: false, isNumber: false))
               }
-              func toggle(_ section: Int32, _ id: Int32, _ title: String, _ key: String) {
-                  entries.append(MyGramEntry(kind: .toggle, sectionValue: section, id: id, title: title, key: key, text: "", flag: d.bool(forKey: key), isNumber: false))
+              func toggle(_ section: Int32, _ id: Int32, _ title: String, _ key: String, _ defaultValue: Bool = false) {
+                  entries.append(MyGramEntry(kind: .toggle, sectionValue: section, id: id, title: title, key: key, text: "", flag: (d.object(forKey: key) as? Bool) ?? defaultValue, isNumber: false))
+              }
+              func option(_ section: Int32, _ id: Int32, _ title: String, _ value: String) {
+                  entries.append(MyGramEntry(kind: .option, sectionValue: section, id: id, title: title, key: "MyGramFont", text: value, flag: (d.string(forKey: "MyGramFont") ?? "") == value, isNumber: false))
               }
               func input(_ section: Int32, _ id: Int32, _ title: String, _ key: String, _ isNumber: Bool = false) {
                   entries.append(MyGramEntry(kind: .input, sectionValue: section, id: id, title: title, key: key, text: d.string(forKey: key) ?? "", flag: false, isNumber: isNumber))
@@ -579,7 +589,30 @@ jobs:
               toggle(2, 18, "Белая иконка", "MyGramWhiteIcon")
               info(2, 19, "Выключено — чёрная иконка (основная). Включено — белая.")
 
-              info(3, 20, "Удалённые сообщения сохраняются автоматически и помечаются красной корзиной.")
+              header(3, 20, "БЕЗ ОГРАНИЧЕНИЙ")
+              toggle(3, 21, "Убрать рекламу", "MyGramNoAds", true)
+              toggle(3, 22, "Скрыть похожие каналы", "MyGramNoSimilar", true)
+              toggle(3, 23, "Показывать ID и дату создания", "MyGramShowId", true)
+              toggle(3, 24, "Разрешить скриншоты", "MyGramNoScreenshotBlock", true)
+              toggle(3, 25, "Разрешить копирование и сохранение", "MyGramNoCopyProtect", true)
+              info(3, 26, "Дата создания аккаунта примерная — считается по ID. Скриншоты и копирование работают только у тебя. Пересылку из защищённых чатов сервер Telegram всё равно может не пропустить. После переключения лучше перезапустить приложение.")
+
+              header(4, 30, "ШРИФТ")
+              option(4, 31, "Системный", "")
+              option(4, 32, "Скруглённый (SF Rounded)", "rounded")
+              option(4, 33, "С засечками (New York)", "serif")
+              option(4, 34, "Моноширинный (SF Mono)", "mono")
+              option(4, 35, "Avenir Next", "Avenir Next")
+              option(4, 36, "Helvetica Neue", "Helvetica Neue")
+              option(4, 37, "Georgia", "Georgia")
+              option(4, 38, "Palatino", "Palatino")
+              option(4, 39, "Verdana", "Verdana")
+              option(4, 40, "Trebuchet MS", "Trebuchet MS")
+              option(4, 41, "Times New Roman", "Times New Roman")
+              option(4, 42, "Courier New", "Courier New")
+              info(4, 43, "Чтобы шрифт поменялся, закрой приложение полностью (смахни из списка приложений) и открой снова.")
+
+              info(5, 50, "Удалённые сообщения сохраняются автоматически и помечаются красной корзиной.")
               return entries
           }
 
@@ -640,6 +673,187 @@ jobs:
           EOF
           grep -n "myGram" submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift | head
           ls -la submodules/SettingsUI/Sources/MyGramSettingsController.swift
+
+      - name: MyGram features (ads, similar, ID, screenshots, copy, fonts)
+        run: |
+          cd /Users/Shared/telegram-ios
+          python3 - <<'EOF'
+          def patch(path, old, new, count=1):
+              s = open(path, encoding="utf-8").read()
+              if s.count(old) != count:
+                  raise SystemExit("anchor not found in " + path + ": " + old[:80])
+              s = s.replace(old, new)
+              open(path, "w", encoding="utf-8").write(s)
+              print("patched", path)
+
+          def flag(key):
+              return '(UserDefaults.standard.object(forKey: "%s") as? Bool ?? true)' % key
+
+          # 1) No ads (sponsored messages)
+          patch("submodules/TelegramCore/Sources/TelegramEngine/Messages/AdMessages.swift",
+              "            return account.network.request(Api.functions.messages.getSponsoredMessages(",
+              "            if " + flag("MyGramNoAds") + " { return .single((nil, nil, nil, [])) } // MyGram no ads\n"
+              "            return account.network.request(Api.functions.messages.getSponsoredMessages(")
+
+          # 2) No similar channels
+          p = "submodules/TelegramCore/Sources/TelegramEngine/Peers/ChannelRecommendation.swift"
+          patch(p, "func _internal_requestRecommendedChannels(account: Account, peerId: EnginePeer.Id?, forceUpdate: Bool) -> Signal<Never, NoError> {\n",
+              "func _internal_requestRecommendedChannels(account: Account, peerId: EnginePeer.Id?, forceUpdate: Bool) -> Signal<Never, NoError> {\n"
+              "    if " + flag("MyGramNoSimilar") + " { return .complete() } // MyGram\n")
+          patch(p, "func _internal_recommendedChannelPeerIds(account: Account, peerId: EnginePeer.Id?) -> Signal<[EnginePeer.Id]?, NoError> {\n",
+              "func _internal_recommendedChannelPeerIds(account: Account, peerId: EnginePeer.Id?) -> Signal<[EnginePeer.Id]?, NoError> {\n"
+              "    if " + flag("MyGramNoSimilar") + " { return .single(nil) } // MyGram\n")
+          patch(p, "func _internal_recommendedChannels(account: Account, peerId: EnginePeer.Id?) -> Signal<RecommendedChannels?, NoError> {\n",
+              "func _internal_recommendedChannels(account: Account, peerId: EnginePeer.Id?) -> Signal<RecommendedChannels?, NoError> {\n"
+              "    if " + flag("MyGramNoSimilar") + " { return .single(nil) } // MyGram\n")
+
+          # 3) Screenshots allowed
+          patch("submodules/UIKitRuntimeUtils/Source/UIKitRuntimeUtils/UIKitUtils.m",
+              "void setLayerDisableScreenshots(CALayer * _Nonnull layer, bool disableScreenshots) {\n",
+              "void setLayerDisableScreenshots(CALayer * _Nonnull layer, bool disableScreenshots) {\n"
+              "    id myGramValue = [[NSUserDefaults standardUserDefaults] objectForKey:@\"MyGramNoScreenshotBlock\"];\n"
+              "    if (disableScreenshots && (myGramValue == nil || [myGramValue boolValue])) { return; } // MyGram\n")
+
+          # 4) Copy / save / forward protection off (local only)
+          NC = "myGramNoCopyProtect()"
+          patch("submodules/TelegramCore/Sources/Utils/PeerUtils.swift", "    var isCopyProtectionEnabled: Bool {\n",
+              "    var isCopyProtectionEnabled: Bool {\n        if " + NC + " { return false } // MyGram\n")
+          p = "submodules/TelegramCore/Sources/Utils/PeerUtils.swift"
+          s = open(p, encoding="utf-8").read()
+          s += '\n\npublic func myGramNoCopyProtect() -> Bool {\n    return ' + flag("MyGramNoCopyProtect") + '\n}\n'
+          open(p, "w", encoding="utf-8").write(s)
+          patch("submodules/TelegramCore/Sources/Utils/MessageUtils.swift", "    func isCopyProtected() -> Bool {\n",
+              "    func isCopyProtected() -> Bool {\n        if " + NC + " { return false } // MyGram\n")
+          patch("submodules/TelegramCore/Sources/TelegramEngine/Data/PeersData.swift",
+              "                if let cachedPeerData = view.cachedData as? CachedUserData {\n                    return cachedPeerData.flags.contains(.copyProtectionEnabled)\n",
+              "                if " + NC + " { return false } // MyGram\n                if let cachedPeerData = view.cachedData as? CachedUserData {\n                    return cachedPeerData.flags.contains(.copyProtectionEnabled)\n")
+          patch("submodules/ChatPresentationInterfaceState/Sources/ChatPresentationInterfaceState.swift",
+              "        self.copyProtectionEnabled = copyProtectionEnabled\n",
+              "        self.copyProtectionEnabled = copyProtectionEnabled && !" + NC + "\n")
+          expr = "cachedUserData.flags.contains(.copyProtectionEnabled) || cachedUserData.flags.contains(.myCopyProtectionEnabled)"
+          for p in ["submodules/TelegramUI/Sources/ChatHistoryListNode.swift",
+                    "submodules/TelegramUI/Sources/ChatControllerContentData.swift",
+                    "submodules/GalleryUI/Sources/GalleryController.swift",
+                    "submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoData.swift",
+                    "submodules/TelegramUI/Sources/StoreDownloadedMedia.swift"]:
+              patch(p, expr, "((" + expr + ") && !" + NC + ")")
+
+          # 5) Profile: user ID + approximate registration date
+          p = "submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoProfileItems.swift"
+          patch(p, "        if let cachedData = data.cachedData as? CachedUserData {\n            if let birthday = cachedData.birthday {\n",
+              "        if " + flag("MyGramShowId") + " {\n"
+              "            let myGramId = user.id.id._internalGetInt64Value()\n"
+              "            items[currentPeerInfoSection]!.append(PeerInfoScreenLabeledValueItem(id: 3900, label: \"ID (нажми, чтобы скопировать)\", text: \"\\(myGramId)\", textColor: .accent, action: { _, _ in\n"
+              "                UIPasteboard.general.string = \"\\(myGramId)\"\n"
+              "            }, requestLayout: { animated in\n"
+              "                interaction.requestLayout(animated)\n"
+              "            }))\n"
+              "            items[currentPeerInfoSection]!.append(PeerInfoScreenLabeledValueItem(id: 3901, label: \"Аккаунт создан (примерно)\", text: myGramRegistrationDateString(myGramId), action: nil, requestLayout: { animated in\n"
+              "                interaction.requestLayout(animated)\n"
+              "            }))\n"
+              "        }\n"
+              "        if let cachedData = data.cachedData as? CachedUserData {\n            if let birthday = cachedData.birthday {\n")
+          s = open(p, encoding="utf-8").read()
+          s += r'''
+
+          private let myGramRegistrationPoints: [(Double, Double)] = [
+              (1, 1376000000), (2768409, 1383264000), (7679610, 1388448000), (11538514, 1391212000),
+              (15835244, 1392940000), (23646077, 1393459000), (38015510, 1393632000), (44634663, 1399334000),
+              (46145305, 1400198000), (54845238, 1411257000), (63263518, 1414454000), (101260938, 1425600000),
+              (101323197, 1426204000), (111220210, 1429574000), (122600695, 1437782000), (124872445, 1439856000),
+              (130029930, 1441324000), (133909606, 1444176000), (143445125, 1448928000), (148670295, 1452211000),
+              (152079341, 1453420000), (171295414, 1457481000), (181783990, 1460246000), (222021233, 1465344000),
+              (225034354, 1466208000), (278941742, 1473465600), (285253072, 1476835000), (294851037, 1479600000),
+              (297621225, 1481846000), (328594461, 1482969000), (337808429, 1487707000), (341546272, 1487782000),
+              (352940995, 1487894000), (369669043, 1490918000), (400169472, 1501459000), (805158066, 1563208000),
+              (1974255900, 1634000000), (5000000000, 1641000000), (6000000000, 1678000000), (7000000000, 1712000000),
+              (8000000000, 1740000000)
+          ]
+
+          func myGramRegistrationDateString(_ id: Int64) -> String {
+              let value = Double(id)
+              let points = myGramRegistrationPoints
+              var timestamp = points[points.count - 1].1
+              if value <= points[0].0 {
+                  timestamp = points[0].1
+              } else {
+                  for i in 1 ..< points.count {
+                      if value <= points[i].0 {
+                          let (x0, y0) = points[i - 1]
+                          let (x1, y1) = points[i]
+                          timestamp = y0 + (y1 - y0) * (value - x0) / (x1 - x0)
+                          break
+                      }
+                  }
+              }
+              let formatter = DateFormatter()
+              formatter.locale = Locale(identifier: "ru_RU")
+              formatter.dateFormat = "LLLL yyyy"
+              return "≈ " + formatter.string(from: Date(timeIntervalSince1970: timestamp))
+          }
+          '''
+          open(p, "w", encoding="utf-8").write(s)
+          print("patched profile id/date")
+
+          # 6) Custom fonts (applied after app restart)
+          p = "submodules/Display/Source/Font.swift"
+          patch(p, "        if let cachedFont = self.cache.get(key) {\n            return cachedFont\n        }\n",
+              "        if let cachedFont = self.cache.get(key) {\n            return cachedFont\n        }\n"
+              "        if design == .regular, let myGramFont = myGramCustomFont(size, weight.weight, traits.contains(.italic)) { return myGramFont }\n")
+          for name, w, it in [("regular", ".regular", "false"), ("medium", ".medium", "false"), ("semibold", ".semibold", "false"),
+                              ("bold", ".bold", "false"), ("light", ".light", "false"), ("semiboldItalic", ".semibold", "true"),
+                              ("mediumItalic", ".medium", "true"), ("italic", ".regular", "true")]:
+              sig = "    public static func %s(_ size: CGFloat) -> UIFont {\n" % name
+              patch(p, sig, sig + "        if let myGramFont = myGramCustomFont(size, %s, %s) { return myGramFont }\n" % (w, it))
+          s = open(p, encoding="utf-8").read()
+          s += r'''
+
+          private let myGramFontChoice: String = UserDefaults.standard.string(forKey: "MyGramFont") ?? ""
+
+          private final class MyGramFontCache: @unchecked Sendable {
+              let lock = NSLock()
+              var fonts: [String: UIFont] = [:]
+          }
+
+          private let myGramFontCache = MyGramFontCache()
+
+          public func myGramCustomFont(_ size: CGFloat, _ weight: UIFont.Weight, _ italic: Bool) -> UIFont? {
+              let choice = myGramFontChoice
+              if choice.isEmpty {
+                  return nil
+              }
+              let key = "\(size)_\(weight.rawValue)_\(italic)"
+              myGramFontCache.lock.lock()
+              let cached = myGramFontCache.fonts[key]
+              myGramFontCache.lock.unlock()
+              if let cached = cached {
+                  return cached
+              }
+              var descriptor: UIFontDescriptor
+              let isSystemDesign = choice == "rounded" || choice == "serif" || choice == "mono"
+              if isSystemDesign {
+                  let base = UIFont.systemFont(ofSize: size, weight: weight).fontDescriptor
+                  let design: UIFontDescriptor.SystemDesign = choice == "rounded" ? .rounded : (choice == "serif" ? .serif : .monospaced)
+                  descriptor = base.withDesign(design) ?? base
+              } else {
+                  descriptor = UIFontDescriptor(fontAttributes: [.family: choice]).addingAttributes([.traits: [UIFontDescriptor.TraitKey.weight: weight]])
+              }
+              if italic, let italicDescriptor = descriptor.withSymbolicTraits(descriptor.symbolicTraits.union(.traitItalic)) {
+                  descriptor = italicDescriptor
+              }
+              let font = UIFont(descriptor: descriptor, size: size)
+              if !isSystemDesign && font.familyName != choice {
+                  return nil
+              }
+              myGramFontCache.lock.lock()
+              myGramFontCache.fonts[key] = font
+              myGramFontCache.lock.unlock()
+              return font
+          }
+          '''
+          open(p, "w", encoding="utf-8").write(s)
+          print("patched fonts")
+          EOF
 
       - name: MyGram style (emoji, colors, background)
         run: |
