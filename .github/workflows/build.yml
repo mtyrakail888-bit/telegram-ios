@@ -523,6 +523,14 @@ jobs:
                       return ItemListSwitchItem(presentationData: presentationData, systemStyle: .glass, title: self.title, value: self.flag, sectionId: self.section, style: .blocks, updated: { value in
                           UserDefaults.standard.set(value, forKey: key)
                           myGramVisualNotify()
+                          if key == "MyGramWhiteIcon", let context = arguments as? AccountContext {
+                              context.sharedContext.applicationBindings.requestSetAlternateIconName(value ? "MyGramWhite" : nil, { success in
+                                  if !success {
+                                      UserDefaults.standard.set(!value, forKey: key)
+                                      myGramVisualNotify()
+                                  }
+                              })
+                          }
                       })
                   case .input:
                       return ItemListSingleLineInputItem(presentationData: presentationData, systemStyle: .glass, title: NSAttributedString(string: self.title, textColor: presentationData.theme.list.itemPrimaryTextColor), text: self.text, placeholder: "не задано", type: self.isNumber ? .number : .regular(capitalization: false, autocorrection: false), spacing: 10.0, sectionId: self.section, textUpdated: { updatedText in
@@ -567,7 +575,11 @@ jobs:
               toggle(1, 15, "Значок Premium", "MyGramFakePremium")
               info(1, 16, "Меняется только у тебя: профиль, настройки, «Мои звёзды». Другие видят настоящие данные. Доп. юзы пиши через запятую — покажутся как купленные. Номер показывается ровно так, как ты его ввёл. Пустое поле = настоящее значение.")
 
-              info(2, 20, "Удалённые сообщения сохраняются автоматически и помечаются красной корзиной.")
+              header(2, 17, "ИКОНКА ПРИЛОЖЕНИЯ")
+              toggle(2, 18, "Белая иконка", "MyGramWhiteIcon")
+              info(2, 19, "Выключено — чёрная иконка (основная). Включено — белая.")
+
+              info(3, 20, "Удалённые сообщения сохраняются автоматически и помечаются красной корзиной.")
               return entries
           }
 
@@ -577,7 +589,7 @@ jobs:
               |> map { presentationData, _ -> (ItemListControllerState, (ItemListNodeState, Any)) in
                   let controllerState = ItemListControllerState(presentationData: ItemListPresentationData(presentationData), title: .text("MyGram"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
                   let listState = ItemListNodeState(presentationData: ItemListPresentationData(presentationData), entries: myGramEntries(), style: .blocks, animateChanges: false)
-                  return (controllerState, (listState, 0))
+                  return (controllerState, (listState, context))
               }
               let controller = ItemListController(context: context, state: signal)
               return controller
@@ -633,6 +645,21 @@ jobs:
         run: |
           cd /Users/Shared/telegram-ios
           python3 "$GITHUB_WORKSPACE/mygram_style.py"
+
+      - name: MyGram icons (hide Telegram icon list)
+        run: |
+          cd /Users/Shared/telegram-ios
+          python3 - <<'EOF'
+          p = "submodules/TelegramUI/Sources/AppDelegate.swift"
+          s = open(p, encoding="utf-8").read()
+          old = "        }, getAvailableAlternateIcons: {\n"
+          if s.count(old) != 1:
+              raise SystemExit("getAvailableAlternateIcons not found")
+          s = s.replace(old, old + "            if \"MyGram\".isEmpty == false { return [] } // MyGram: own icons in MyGram settings\n")
+          open(p, "w", encoding="utf-8").write(s)
+          print("patched icon list")
+          EOF
+          grep -n "own icons in MyGram" submodules/TelegramUI/Sources/AppDelegate.swift
 
       - name: Sideload fix (no App Group)
         run: |
@@ -746,6 +773,39 @@ jobs:
                   d["CFBundleDisplayName"] = NAME
                   p.write_bytes(plistlib.dumps(d, fmt=plistlib.FMT_BINARY))
           EOF
+          # MyGram icons: black = main, white = alternate
+          APP=$(ls -d Payload/*.app | head -n 1)
+          for V in Black White; do
+            SRC="$GITHUB_WORKSPACE/mygram_icons/$(echo $V | tr 'A-Z' 'a-z').png"
+            for S in 20 29 40 60 76 83.5; do
+              for M in 1 2 3; do
+                PX=$(python3 -c "print(round($S*$M))")
+                N="MyGram${V}${S}x${S}"; [ $M -gt 1 ] && N="$N@${M}x"
+                sips -s format png -z $PX $PX "$SRC" --out "$APP/$N.png" >/dev/null
+              done
+            done
+          done
+          python3 - <<'EOF'
+          import plistlib, pathlib
+          app = next(pathlib.Path("Payload").glob("*.app"))
+          p = app / "Info.plist"
+          d = plistlib.loads(p.read_bytes())
+          sizes = ["20", "29", "40", "60", "76", "83.5"]
+          def files(v):
+              return ["MyGram%s%sx%s" % (v, s, s) for s in sizes]
+          for key in ["CFBundleIcons", "CFBundleIcons~ipad"]:
+              d[key] = {
+                  "CFBundlePrimaryIcon": {"CFBundleIconFiles": files("Black"), "UIPrerenderedIcon": True},
+                  "CFBundleAlternateIcons": {"MyGramWhite": {"CFBundleIconFiles": files("White"), "UIPrerenderedIcon": True}},
+              }
+          d.pop("CFBundleIconName", None)
+          d.pop("CFBundleIconFile", None)
+          d.pop("CFBundleIconFiles", None)
+          p.write_bytes(plistlib.dumps(d, fmt=plistlib.FMT_BINARY))
+          print("icons set:", d["CFBundleIcons"])
+          EOF
+          ls "$APP" | grep MyGram | head -50
+
           rm -f ../MyGram.ipa
           zip -qry ../MyGram.ipa Payload
           cd .. && rm -rf ipa
